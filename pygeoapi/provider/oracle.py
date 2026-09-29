@@ -400,7 +400,7 @@ class OracleProvider(BaseProvider):
 
         # Table properties
         self.table = provider_def["table"]
-        self.count = provider_def.get("count", False)
+        self.count = provider_def.get("count", True)
         self.conn_dic = provider_def["data"]
         self.geom = provider_def["geom_field"]
         self.properties = [item.lower() for item in self.properties]
