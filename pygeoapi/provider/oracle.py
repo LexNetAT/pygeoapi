@@ -400,6 +400,7 @@ class OracleProvider(BaseProvider):
 
         # Table properties
         self.table = provider_def["table"]
+        self.count = provider_def.get("count", False)
         self.conn_dic = provider_def["data"]
         self.geom = provider_def["geom_field"]
         self.properties = [item.lower() for item in self.properties]
@@ -419,6 +420,7 @@ class OracleProvider(BaseProvider):
         LOGGER.debug("Setting Oracle properties:")
         LOGGER.debug(f"Name:{self.name}")
         LOGGER.debug(f"ID_field:{self.id_field}")
+        LOGGER.debug(f"Count:{self.count}")
         LOGGER.debug(f"Table:{self.table}")
         LOGGER.debug(f"sdo_param: {self.sdo_param}")
         LOGGER.debug(f"sdo_operator: {self.sdo_operator}")
@@ -667,6 +669,24 @@ class OracleProvider(BaseProvider):
 
         properties = filtered_properties
 
+        # Default values for the process_query function (sql_manipulator)
+        query_args = {
+            "offset": offset,
+            "limit": limit,
+            "resulttype": resulttype,
+            "bbox": bbox,
+	    "datetime_": datetime_,
+	    "properties": properties,
+	    "sortby": sortby,
+	    "skip_geometry": skip_geometry,
+	    "select_properties": select_properties,
+	    "crs_transform_spec": crs_transform_spec,
+	    "q": q,
+	    "language": language,
+	    "filterq": filterq,
+        }
+        extra_params["geom"] = self.geom
+ 
         # Check mandatory filter properties
         property_dict = dict(properties)
         if self.mandatory_properties:
@@ -680,65 +700,48 @@ class OracleProvider(BaseProvider):
                         raise ProviderInvalidQueryError(
                             f"Missing mandatory filter property: {mand_col}"
                         )
+        if self.count:
+            with DatabaseConnection(
+               self.conn_dic,
+               self.table,
+               properties=self.properties,
+               context="hits",
+            ) as db:
+                cursor = db.conn.cursor()
 
-        with DatabaseConnection(
-            self.conn_dic,
-            self.table,
-            properties=self.properties,
-            context="hits",
-        ) as db:
-            cursor = db.conn.cursor()
-
-            where_dict = self._get_where_clauses(
-                properties=properties,
-                bbox=bbox,
-                bbox_crs=self.storage_crs,
-                sdo_param=self.sdo_param,
-                sdo_operator=self.sdo_operator,
-            )
-
-            # Not dangerous to use self.table as substitution,
-            # because of getFields ...
-            sql_query = f"SELECT COUNT(1) AS hits \
-                            FROM {self.table} \
-                            {where_dict['clause']} #WHERE#"
-
-            # Assign where_dict["properties"] to bind_variables
-            bind_variables = {**where_dict["properties"]}
-
-            # Default values for the process_query function (sql_manipulator)
-            query_args = {
-                "offset": offset,
-                "limit": limit,
-                "resulttype": resulttype,
-                "bbox": bbox,
-                "datetime_": datetime_,
-                "properties": properties,
-                "sortby": sortby,
-                "skip_geometry": skip_geometry,
-                "select_properties": select_properties,
-                "crs_transform_spec": crs_transform_spec,
-                "q": q,
-                "language": language,
-                "filterq": filterq,
-            }
-
-            # Apply the SQL manipulation plugin
-            extra_params["geom"] = self.geom
-            sql_query, bind_variables = self._process_query_with_sql_manipulator_sup(   # noqa: E501
-                db, sql_query, bind_variables, extra_params, **query_args
-            )
-
-            try:
-                cursor.execute(sql_query, bind_variables)
-            except oracledb.Error as err:
-                LOGGER.error(
-                    f"Error executing sql_query: {sql_query}: {err}"
+                where_dict = self._get_where_clauses(
+                   properties=properties,
+                   bbox=bbox,
+                   bbox_crs=self.storage_crs,
+                   sdo_param=self.sdo_param,
+                   sdo_operator=self.sdo_operator,
                 )
-                raise ProviderQueryError()
+                # Not dangerous to use self.table as substitution,
+                # because of getFields ...
+                sql_query = f"SELECT COUNT(1) AS hits \
+                   FROM {self.table} \
+                   {where_dict['clause']} #WHERE#"
 
-            hits = cursor.fetchone()[0]
-            LOGGER.debug(f"hits: {str(hits)}")
+                # Assign where_dict["properties"] to bind_variables
+                bind_variables = {**where_dict["properties"]}
+
+                #Apply the SQL manipulation plugin
+                sql_query, bind_variables = self._process_query_with_sql_manipulator_sup(   # noqa: E501
+                    db, sql_query, bind_variables, extra_params, **query_args
+                )
+
+                try:
+                   cursor.execute(sql_query, bind_variables)
+                except oracledb.Error as err:
+                   LOGGER.error(
+			    f"Error executing sql_query: {sql_query}: {err}"
+			)
+                   raise ProviderQueryError()
+
+                hits = cursor.fetchone()[0]
+                LOGGER.debug(f"hits: {str(hits)}")
+        else:
+            hits = -1
 
         with DatabaseConnection(
             self.conn_dic, self.table, properties=self.properties
